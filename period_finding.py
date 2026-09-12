@@ -1,29 +1,91 @@
-from qiskit import QuantumCircuit
-import numpy as np
+from qiskit import QuantumCircuit, transpile
+from qiskit_aer import AerSimulator
+
+from shor_algorithm.qft import qft
+from shor_algorithm.modular_exponentiation import (
+    add_controlled_modular_exponentiation
+)
 
 
-def qft(n):
+def period_finding_circuit(N=15, a=2):
     """
-    Create an n-qubit Quantum Fourier Transform circuit.
+    Quantum period-finding circuit for Shor's algorithm.
     """
 
-    qc = QuantumCircuit(n, name="QFT")
+    n_count = 4
+    n_work = 4
 
-    for j in range(n):
-        qc.h(j)
+    qc = QuantumCircuit(n_count + n_work, n_count)
 
-        for k in range(j + 1, n):
-            angle = np.pi / (2 ** (k - j))
-            qc.cp(angle, k, j)
+    counting_qubits = list(range(n_count))
+    work_qubits = list(range(n_count, n_count + n_work))
 
-    # Reverse the qubit order
-    for i in range(n // 2):
-        qc.swap(i, n - i - 1)
+    # 1. Create superposition in counting register
+    for qubit in counting_qubits:
+        qc.h(qubit)
+
+    # 2. Prepare work register in |1>
+    qc.x(work_qubits[0])
+
+    qc.barrier()
+
+    # 3. Controlled modular exponentiation
+    add_controlled_modular_exponentiation(
+        qc,
+        counting_qubits,
+        work_qubits,
+        a,
+        N
+    )
+
+    qc.barrier()
+
+    # 4. Apply inverse QFT
+    inverse_qft = qft(n_count).inverse()
+
+    qc.compose(
+        inverse_qft,
+        qubits=counting_qubits,
+        inplace=True
+    )
+
+    qc.barrier()
+
+    # 5. Measure counting register
+    qc.measure(
+        counting_qubits,
+        range(n_count)
+    )
 
     return qc
 
 
-# Example: 3-qubit QFT
-qc = qft(3)
+# ---------------------------------
+# Run Shor period-finding example
+# ---------------------------------
+
+N = 15
+a = 2
+
+qc = period_finding_circuit(N, a)
 
 print(qc.draw())
+
+
+# Simulate
+simulator = AerSimulator()
+
+compiled_circuit = transpile(
+    qc,
+    simulator
+)
+
+result = simulator.run(
+    compiled_circuit,
+    shots=1024
+).result()
+
+counts = result.get_counts()
+
+print("\nMeasurement results:")
+print(counts)
